@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Your Friendly Spider</title>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0px;
+            padding: 0px;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+        }
+
+        .top-bar {
+            height: 100px;
+            display: flex;
+            flex-direction: row;
+            padding: 10px;
+        }
+
+        .nav-bar {
+            flex: 1 1;
+            display: inline-block;
+        }
+
+        .nav-bar button {
+            display: inline-block;
+        }
+
+        #browser-nav {
+            display: inline-block;
+        }
+
+        #history-list {
+            overflow: scroll;
+        }
+
+        .chat {
+            flex: 1 1;
+            display: inline-block;
+        }
+
+        .chat textarea {
+            width: 100%;
+            height: 100%;
+        }
+
+        .browser-page {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <div class="nav-bar">
+            <form id="browser-nav">
+                <label for="browser-url">URL:</label>
+                <input type="text" id="browser-url" name="browser-url" value="" size="60">
+                <input type="submit" value="Go">
+            </form>
+            <button id="back-button" disabled><</button>
+            <button id="forward-button" disabled>></button>
+            <br>
+            <p id="history-description"></p>
+        </div>
+        <div class="chat">
+            <textarea id="chat-area" disabled></textarea>
+        </div>
+    </div>
+    <div class="browser-page">
+        <iframe id="browser-frame"></iframe>
+    </div>
+    <script>
+        const browserFrame = document.getElementById('browser-frame');
+        const navEl = document.getElementById('browser-nav');
+
+        // The most recently visited page is always the last entry
+        let browserHistory = [];
+        let historyIndex = 0; // Reverse index in browser history
+
+        function enableElement(el, enabled) {
+            if (enabled) {
+                el.removeAttribute('disabled');
+            } else {
+                el.setAttribute('disabled', '');
+            }
+        }
+
+        function enableBackButton(enabled) {
+            const backBtn = document.getElementById('back-button');
+            enableElement(backBtn, enabled);
+        }
+
+        function enableForwardButton(enabled) {
+            const forwardBtn = document.getElementById('forward-button');
+            enableElement(forwardBtn, enabled);
+        }
+
+        // Requests the label of a model for the URL
+        async function requestModel(url, currentModel) {
+            return fetch(`/api/v1/model?url=${url}&model_label=${currentModel || ''}`)
+                .then(res => res.text());
+        }
+
+        async function requestSentence(modelLabel) {
+            return fetch(`/api/v1/model/sentence?model_label=${modelLabel}`)
+                .then(res => res.text());
+        }
+
+        function historyAt(index) {
+            const i = browserHistory.length - 1 - index;
+
+            if (i < 0) {
+                return undefined;
+            }
+
+            return browserHistory[i];
+        }
+
+        function currentPageInfo() {
+            return historyAt(historyIndex);
+        }
+
+        function updateHistoryControls() {
+            enableBackButton(browserHistory.length - 1 - historyIndex > 0);
+            enableForwardButton(historyIndex !== 0);
+
+            const historyDescription = document.getElementById('history-description');
+            historyDescription.innerHTML = browserHistory.reduce((str, { url }) => `${str} > ${url}`, '');
+        }
+
+        async function addToHistory(url) {
+            const currentPage = currentPageInfo();
+
+            // Request the model based on the previous one and the new URL
+            const newModelLabel = await requestModel(url, currentPage === undefined ? '' : currentPage.modelLabel);
+
+            if (historyIndex != 0) {
+                // If we are somewhere back in history then we clear history ahead so we can start from where we are now
+                const i = browserHistory.length - 1 - historyIndex;
+                // Remove entries after the new last page
+                browserHistory = browserHistory.slice(0, i + 1);
+
+                console.log('New history started');
+            }
+
+            browserHistory.push({ url, modelLabel: newModelLabel });
+            console.log('History updated:', browserHistory);
+
+            updateHistoryControls();
+        }
+
+        async function navigateTo(newUrl) {
+            // Navigate the frame to the new URL
+            browserFrame.setAttribute('src', `/api/v1/proxy?url=${newUrl}`);
+
+            const browserUrl = document.getElementById('browser-url');
+            browserUrl.setAttribute('value', newUrl);
+        }
+
+        async function goBack() {
+            if (browserHistory.length - historyIndex - 1 < 0) {
+                // We are already at the beginning of history
+                return;
+            }
+
+            historyIndex += 1;
+            const { url } = browserHistory[browserHistory.length - 1 - historyIndex];
+            await navigateTo(url);
+            updateHistoryControls();
+        }
+
+        async function goForward() {
+            if (historyIndex === 0) {
+                // We are at the end of history
+                return;
+            }
+
+            historyIndex -= 1;
+
+            const { url } = browserHistory[browserHistory.length - 1 - historyIndex];
+            await navigateTo(url);
+            updateHistoryControls();
+        }
+
+        async function goTo(url) {
+            const currentPage = currentPageInfo();
+
+            if (currentPage !== undefined && currentPage.url === url) {
+                // We are already at this URL, so no need to continue
+                return;
+            }
+
+            await navigateTo(url);
+            await addToHistory(url);
+        }
+
+        navEl.onsubmit = () => {
+            let url = document.getElementById('browser-url').value;
+
+            // Add protocol if necessary
+            if (!(url.startsWith('http://') || url.startsWith('https://'))) {
+                url = `https://${url}`;
+            }
+
+            goTo(url);
+
+            // Don't actually submit the form and do a full page load
+            return false;
+        };
+
+        document.getElementById('back-button').onclick = () => goBack();
+        document.getElementById('forward-button').onclick = () => goForward();
+
+        document.body.onload = () => {
+            goTo('https://en.m.wikipedia.org/wiki/Spiders');
+            updateHistoryControls();
+        };
+
+        window.addEventListener('message', (event) => {
+            if (!('type' in event.data)) {
+                return;
+            }
+
+            const { type } = event.data;
+
+            if (type === 'link-clicked') {
+                console.log('Link clicked in page');
+                goTo(event.data.url);
+            }
+        }, false);
+
+        browserFrame.onload = () => {
+            // Either the user navigated to a page with the browser controls
+            // or they clicked a link in the page in the iframe
+
+            // Modify all the links on the page to use our proxy
+            const { url } = currentPageInfo();
+            const foreignOrigin = (new URL(url)).origin;
+            browserFrame.contentWindow.eval(`
+                function isAbsolute(url) {
+                    // https://stackoverflow.com/a/19709846
+                    relativeRegexp = new RegExp('^(?:[a-z]+:)?//', 'i');
+                    return relativeRegexp.test(url);
+                }
+
+                function rewriteAbs(elements, attrName) {
+                    const absEls = elements.filter(el => !isAbsolute(el.getAttribute(attrName)))
+                    absEls.forEach((el) => {
+                        const fullUrl = new URL(el.getAttribute(attrName), "${foreignOrigin}");
+                        el.setAttribute(attrName, fullUrl.toString());
+                    });
+                }
+
+                const scripts = Array.from(document.getElementsByTagName("script"));
+                const styles = Array.from(document.getElementsByTagName("link"))
+                    .filter(lnk => lnk.getAttribute("rel") === "stylesheet");
+                const images = Array.from(document.images);
+                const links = Array.from(document.links);
+
+                rewriteAbs(scripts, "src");
+                rewriteAbs(styles, "href");
+                rewriteAbs(images, "src");
+                rewriteAbs(links, "href");
+
+                // Intercept link clicks and tell the parent page about them
+                links.forEach((link) => {
+                    link.onclick = () => {
+                        window.parent.postMessage({ type: 'link-clicked', url: link.href });
+                        return false;
+                    };
+                });
+
+                console.log('Modified links to point to proxy');
+            `);
+        };
+
+        function randomInterval(fn, minDelay, maxDelay) {
+            const millis = minDelay + Math.random() * (maxDelay - minDelay);
+
+            setTimeout(() => {
+                fn();
+                randomInterval(fn, minDelay, maxDelay);
+            }, millis);
+        }
+
+        randomInterval(async () => {
+            const { modelLabel } = currentPageInfo();
+            const sentence = await requestSentence(modelLabel);
+
+            const chatArea = document.getElementById('chat-area');
+            chatArea.value += `${modelLabel}> ${sentence}\n`;
+
+            // Keep it scrolled to the bottom
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }, 500, 15000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+beautifulsoup4==4.9.2
+spacy==2.3.2
+markovify==0.8.3
+flask==1.1.2
+requests==2.23.0
