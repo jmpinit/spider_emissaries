@@ -146,6 +146,7 @@
                 const i = browserHistory.length - 1 - historyIndex;
                 // Remove entries after the new last page
                 browserHistory = browserHistory.slice(0, i + 1);
+                historyIndex = 0;
 
                 console.log('New history started');
             }
