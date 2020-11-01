@@ -9,6 +9,8 @@
             height: 100%;
             margin: 0px;
             padding: 0px;
+
+            font-family: sans-serif;
         }
 
         iframe {
@@ -17,10 +19,11 @@
         }
 
         .top-bar {
-            height: 100px;
+            height: 200px;
             display: flex;
             flex-direction: row;
             padding: 10px;
+            overflow: scroll;
         }
 
         .nav-bar {
@@ -34,10 +37,6 @@
 
         #browser-nav {
             display: inline-block;
-        }
-
-        #history-list {
-            overflow: scroll;
         }
 
         .chat {
@@ -67,10 +66,11 @@
             <button id="back-button" disabled><</button>
             <button id="forward-button" disabled>></button>
             <br>
+            <p id="emissary-name"></p>
             <p id="history-description"></p>
         </div>
         <div class="chat">
-            <textarea id="chat-area" disabled></textarea>
+            <textarea id="chat-window" disabled></textarea>
         </div>
     </div>
     <div class="browser-page">
@@ -108,8 +108,31 @@
                 .then(res => res.text());
         }
 
-        async function requestSentence(modelLabel) {
-            return fetch(`/api/v1/model/sentence?model_label=${modelLabel}`)
+        // Update the model associated with our user ID
+        async function setUserModel(model) {
+            if (model === undefined) {
+                return;
+            }
+
+            return fetch('/api/v1/user', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    user_name: window.userName,
+                    model_label: model,
+                }),
+            });
+        }
+
+        async function getRecentMessages() {
+            return fetch('/api/v1/chat')
+                .then(res => res.json());
+        }
+
+        async function requestUserName() {
+            return fetch('/api/v1/name')
                 .then(res => res.text());
         }
 
@@ -132,7 +155,7 @@
             enableForwardButton(historyIndex !== 0);
 
             const historyDescription = document.getElementById('history-description');
-            historyDescription.innerHTML = browserHistory.reduce((str, { url }) => `${str} > ${url}`, '');
+            historyDescription.innerHTML = `<b>Has studied:</b> ${browserHistory.map(({ url }) => url).join(', ')}`;
         }
 
         async function addToHistory(url) {
@@ -172,7 +195,8 @@
             }
 
             historyIndex += 1;
-            const { url } = browserHistory[browserHistory.length - 1 - historyIndex];
+            const { url, modelLabel } = browserHistory[browserHistory.length - 1 - historyIndex];
+            await setUserModel(modelLabel);
             await navigateTo(url);
             updateHistoryControls();
         }
@@ -185,7 +209,8 @@
 
             historyIndex -= 1;
 
-            const { url } = browserHistory[browserHistory.length - 1 - historyIndex];
+            const { url, modelLabel } = browserHistory[browserHistory.length - 1 - historyIndex];
+            await setUserModel(modelLabel);
             await navigateTo(url);
             updateHistoryControls();
         }
@@ -200,6 +225,9 @@
 
             await navigateTo(url);
             await addToHistory(url);
+
+            const newPageInfo = currentPageInfo();
+            await setUserModel(newPageInfo.modelLabel);
         }
 
         navEl.onsubmit = () => {
@@ -219,9 +247,12 @@
         document.getElementById('back-button').onclick = () => goBack();
         document.getElementById('forward-button').onclick = () => goForward();
 
-        document.body.onload = () => {
+        document.body.onload = async () => {
+            await initUser();
             goTo('https://en.m.wikipedia.org/wiki/Spiders');
             updateHistoryControls();
+
+            setInterval(() => updateChat(), 3000);
         };
 
         window.addEventListener('message', (event) => {
@@ -282,6 +313,79 @@
             `);
         };
 
+        async function initUser() {
+            window.userName = getCookie('userName');
+
+            if (window.userName == null) {
+                // Create a new user identity and store it as a cookie
+                window.userName = await requestUserName();
+                setCookie('userName', window.userName);
+            }
+
+            document.getElementById('emissary-name').innerHTML = `<b>Your emissary</b>: ${window.userName}`;
+        }
+
+        async function updateChat() {
+            const chatWindow = document.getElementById('chat-window');
+            const messages = await getRecentMessages();
+
+            chatWindow.value = messages.reverse().reduce((chat, { time, name, message }) => {
+                const datetime = new Date(time * 1000);
+                return chat + `[${datetime.getHours()}:${datetime.getMinutes()}:${datetime.getSeconds()}] ${name}: ${message}\n`;
+            }, '');
+
+            // Keep it scrolled to the bottom
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        /*
+        * Utilities
+        */
+
+        // https://stackoverflow.com/a/2117523
+        function uuidv4() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        // https://stackoverflow.com/a/24103596
+        function setCookie(name, value, days) {
+            let expires = "";
+
+            if (days) {
+                const date = new Date();
+                date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+                expires = "; expires=" + date.toUTCString();
+            }
+
+            document.cookie = name + "=" + (value || "")  + expires + "; path=/";
+        }
+
+        // https://stackoverflow.com/a/24103596
+        function getCookie(name) {
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+
+                while (c.charAt(0) === ' ') {
+                    c = c.substring(1,c.length);
+                }
+
+                if (c.indexOf(nameEQ) === 0) {
+                    return c.substring(nameEQ.length, c.length);
+                }
+            }
+            return null;
+        }
+
+        // https://stackoverflow.com/a/24103596
+        function eraseCookie(name) {
+            document.cookie = name + '=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+        }
+
         function randomInterval(fn, minDelay, maxDelay) {
             const millis = minDelay + Math.random() * (maxDelay - minDelay);
 
@@ -290,17 +394,6 @@
                 randomInterval(fn, minDelay, maxDelay);
             }, millis);
         }
-
-        randomInterval(async () => {
-            const { modelLabel } = currentPageInfo();
-            const sentence = await requestSentence(modelLabel);
-
-            const chatArea = document.getElementById('chat-area');
-            chatArea.value += `${modelLabel}> ${sentence}\n`;
-
-            // Keep it scrolled to the bottom
-            chatArea.scrollTop = chatArea.scrollHeight;
-        }, 500, 15000);
     </script>
 </body>
 </html>

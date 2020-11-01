@@ -1,0 +1,3 @@
+CHAT_MIN_DELAY = 1
+CHAT_MAX_DELAY = 15
+DATABASE = 'spider.db'
