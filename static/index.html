@@ -253,6 +253,7 @@
             updateHistoryControls();
 
             setInterval(() => updateChat(), 1000);
+            await updateChat();
         };
 
         window.addEventListener('message', (event) => {
